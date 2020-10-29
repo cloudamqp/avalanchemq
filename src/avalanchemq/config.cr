@@ -60,6 +60,30 @@ module AvalancheMQ
       end
     end
 
+    def configured_tcp_listeners
+      if (amqps_port > 0 || https_port > 0) && !tls_configured?
+        STDERR.puts "WARNING: Certificate for TLS not configured, ignoring AMQPS/HTTPS listeners"
+      end
+
+      listeners = [] of { Symbol, String, Int32 }
+      listeners << { :amqp, @amqp_bind, @amqp_port } if @amqp_port > 0
+      listeners << { :amqps, @amqp_bind, @amqps_port } if tls_configured? && @amqps_port > 0
+      listeners << { :http, @http_bind, @http_port } if @http_port > 0
+      listeners << { :https, @http_bind, @https_port } if tls_configured? && @https_port > 0
+      listeners
+    end
+
+    def configured_socket_listeners
+      listeners = [] of { Symbol, String }
+      listeners << { :amqp, @unix_path } unless @unix_path.empty?
+      listeners << { :http, @http_unix_path } unless @http_unix_path.empty?
+      listeners
+    end
+
+    def tls_configured?
+      !@tls_cert_path.empty?
+    end
+
     # ameba:disable Metrics/CyclomaticComplexity
     private def parse_main(settings)
       settings.each do |config, v|
