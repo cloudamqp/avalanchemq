@@ -458,8 +458,10 @@ module AvalancheMQ
       stop_upstream_links
       Fiber.yield
       if seamless_restart
-        # TODO: Handover FDs to systemd
-        SystemD.store_fds(@connections.map &.fd, "vhost=#{@name}")
+        {% unless flag?(:without_systemd) %}
+          # TODO: Handover FDs to systemd
+          SystemD.store_fds(@connections.map &.fd, "vhost=#{@name}")
+        {% end %}
       else
         @log.debug "Closing connections"
         @connections.each &.close("Broker shutdown")

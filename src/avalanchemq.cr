@@ -1,10 +1,12 @@
-require "./avalanchemq/version"
-require "./stdlib/*"
-require "./avalanchemq/config"
 require "file"
-require "systemd"
+require "./stdlib/*"
+require "./avalanchemq/version"
+require "./avalanchemq/config"
 require "./avalanchemq/server_cli"
 require "./avalanchemq/reporter"
+{% unless flag?(:without_systemd) %}
+  require "systemd"
+{% end %}
 
 config = AvalancheMQ::Config.instance
 AvalancheMQ::ServerCLI.new(config).parse
@@ -101,34 +103,36 @@ if !config.tls_cert_path.empty?
   reload_tls(context, config, log)
 end
 
-SystemD.listen_fds_with_names.each do |fd, name|
-  case name
-  when config.amqp_systemd_socket_name, "unknown"
-    case
-    when SystemD.is_tcp_listener?(fd)
-      spawn amqp_server.listen(TCPServer.new(fd: fd)), name: "AMQP server listener"
-    when SystemD.is_unix_stream_listener?(fd)
-      spawn amqp_server.listen(UNIXServer.new(fd: fd)), name: "AMQP server listener"
+{% unless flag?(:without_systemd) %}
+  SystemD.listen_fds_with_names.each do |fd, name|
+    case name
+    when config.amqp_systemd_socket_name, "unknown"
+      case
+      when SystemD.is_tcp_listener?(fd)
+        spawn amqp_server.listen(TCPServer.new(fd: fd)), name: "AMQP server listener"
+      when SystemD.is_unix_stream_listener?(fd)
+        spawn amqp_server.listen(UNIXServer.new(fd: fd)), name: "AMQP server listener"
+      else
+        raise "Unsupported amqp socket type"
+      end
+    when config.http_systemd_socket_name
+      case
+      when SystemD.is_tcp_listener?(fd)
+        http_server.bind(TCPServer.new(fd: fd))
+      when SystemD.is_unix_stream_listener?(fd)
+        http_server.bind(UNIXServer.new(fd: fd))
+      else
+        raise "Unsupported http socket type"
+      end
     else
-      raise "Unsupported amqp socket type"
+      # TODO: support resuming client connections
+      # io = TCPSocket.new(fd: fd)
+      # load_parameters_such_as_username_etc
+      # Client.new(io, ...)
+      puts "unexpected socket from systemd '#{name}' (#{fd})"
     end
-  when config.http_systemd_socket_name
-    case
-    when SystemD.is_tcp_listener?(fd)
-      http_server.bind(TCPServer.new(fd: fd))
-    when SystemD.is_unix_stream_listener?(fd)
-      http_server.bind(UNIXServer.new(fd: fd))
-    else
-      raise "Unsupported http socket type"
-    end
-  else
-    # TODO: support resuming client connections
-    # io = TCPSocket.new(fd: fd)
-    # load_parameters_such_as_username_etc
-    # Client.new(io, ...)
-    puts "unexpected socket from systemd '#{name}' (#{fd})"
   end
-end
+{% end %}
 
 if config.amqp_port > 0
   spawn amqp_server.listen(config.amqp_bind, config.amqp_port),
@@ -185,7 +189,9 @@ Signal::USR2.trap do
 end
 
 Signal::HUP.trap do
-  SystemD.notify("RELOADING=1\n")
+  {% unless flag?(:without_systemd) %}
+    SystemD.notify("RELOADING=1\n")
+  {% end %}
   if config.config_file.empty?
     log.info { "No configuration file to reload" }
   else
@@ -194,17 +200,21 @@ Signal::HUP.trap do
     reload_log(log, config)
     reload_tls(context, config, log)
   end
-  SystemD.notify("READY=1\n")
+  {% unless flag?(:without_systemd) %}
+    SystemD.notify("READY=1\n")
+  {% end %}
 end
 
 first_shutdown_attempt = true
 shutdown = ->(_s : Signal) do
   if first_shutdown_attempt
     first_shutdown_attempt = false
-    SystemD.notify("STOPPING=1\n")
-    #amqp_server.vhosts.each do |_, vh|
-    #  SystemD.store_fds(vh.connections.map(&.fd), "vhost=#{vh.dir}")
-    #end
+    {% unless flag?(:without_systemd) %}
+      SystemD.notify("STOPPING=1\n")
+      #amqp_server.vhosts.each do |_, vh|
+      #  SystemD.store_fds(vh.connections.map(&.fd), "vhost=#{vh.dir}")
+      #end
+    {% end %}
     puts "Shutting down gracefully..."
     amqp_server.close
     http_server.try &.close
@@ -221,7 +231,9 @@ shutdown = ->(_s : Signal) do
 end
 Signal::INT.trap &shutdown
 Signal::TERM.trap &shutdown
-SystemD.notify("READY=1\n")
+{% unless flag?(:without_systemd) %}
+  SystemD.notify("READY=1\n")
+{% end %}
 GC.collect
 
 # write to the lock file to detect lost lock
