@@ -105,6 +105,15 @@ module AvalancheMQ
             },
           }
         end
+
+        def save_transient_state(json)
+          json.object do
+            json.field "tag", @tag
+            json.field "queue", @queue.name
+            json.field "no_ack", @no_ack
+            json.field "exclusive", @exclusive
+          end
+        end
       end
     end
   end

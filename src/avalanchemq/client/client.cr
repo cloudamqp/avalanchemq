@@ -831,5 +831,34 @@ module AvalancheMQ
       return "Unknown" if @socket.is_a?(UNIXSocket) && Config.instance.unix_socket_tls_terminated
       nil
     end
+
+    def save_to_json(json)
+      json.object do
+        json.field "remote_address", @remote_address.to_s # or take these from the new socket?
+        json.field "local_address", @local_address.to_s # or take these from the new socket?
+        json.field "user", @user.name
+        json.field "channel_max", @channel_max
+        json.field "frame_max", @max_frame_size
+        json.field "heartbeat_timeout", @heartbeat_timeout
+        json.field "properties" do
+          @client_properties.to_json(json)
+        end
+        json.field "channels" do
+          json.array do
+            @channels.each_value do |ch|
+              ch.save_to_json(json)
+            end
+          end
+        end
+      end
+    end
+
+    def self.restore_from_json(json)
+      conn = json.as_h
+      username = conn["user"].as_s
+      channel_max = conn["channel_max"].as_i.to_u16
+      properties = conn["properties"].as_h
+      Client.new(...)
+    end
   end
 end

@@ -573,6 +573,42 @@ module AvalancheMQ
         # no regex for speed
         str.try { |r| r == "amq.rabbitmq.reply-to" || r.starts_with? DIRECT_REPLY_PREFIX }
       end
+
+      def restore_from_json(json)
+        ch = json.as_h
+        id = ch["id"].as_i.to_u16
+      end
+
+      def save_to_json(json)
+        json.object do
+          json.field "id", @id
+          json.field "prefetch_count", @prefetch_count
+          json.field "prefetch_size", @prefetch_size
+          json.field "prefetch_global", @global_prefetch
+          json.field "publish_confirm", @confirm
+          json.field "publish_confirm_total", @confirm_total
+          json.field "delivery_tag", @delivery_tag
+          json.field "unacked" do
+            json.array do
+              @unacked.each do |unack|
+                json.object do
+                  json.field "sp", unack.sp.to_i64
+                  json.field "queue", unack.queue.name
+                  json.field "persistent", unack.persistent
+                  json.field "consumer_tag", unack.consumer.try &.tag
+                end
+              end
+            end
+          end
+          json.field "consumers" do
+            json.array do
+              @consumers.each do |consumer|
+                consumer.save_transient_state(json)
+              end
+            end
+          end
+        end
+      end
     end
   end
 end

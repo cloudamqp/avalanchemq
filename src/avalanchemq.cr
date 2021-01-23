@@ -122,11 +122,21 @@ SystemD.listen_fds_with_names.each do |fd, name|
       raise "Unsupported http socket type"
     end
   else
-    # TODO: support resuming client connections
-    # io = TCPSocket.new(fd: fd)
-    # load_parameters_such_as_username_etc
-    # Client.new(io, ...)
-    puts "unexpected socket from systemd '#{name}' (#{fd})"
+    if md = /^vhost=(.*)/.match(name)
+      vhost = md[1]
+      socket =
+        case
+        when SystemD.is_tcp_socket? fd
+          TCPSocket.new(fd: fd)
+        when SystemD.is_unix_stream_socket? fd
+          UNIXSocket.new(fd: fd)
+        else
+          raise "Unsupported client socket type"
+        end
+      amqp_server.vhosts[vhost]?.try &.restore_connection(socket)
+    else
+      puts "unexpected socket from systemd '#{name}' (#{fd})"
+    end
   end
 end
 
@@ -201,11 +211,13 @@ first_shutdown_attempt = true
 shutdown = ->(_s : Signal) do
   if first_shutdown_attempt
     first_shutdown_attempt = false
-    SystemD.notify("STOPPING=1\n")
-    # amqp_server.vhosts.each do |_, vh|
-    #  SystemD.store_fds(vh.connections.map(&.fd), "vhost=#{vh.dir}")
-    # end
     puts "Shutting down gracefully..."
+    SystemD.notify("STOPPING=1\n")
+    amqp_server.vhosts.each do |_, vh|
+      if SystemD.store_fds(vh.connections.map(&.fd), "vhost=#{vh.dir}")
+        vh.save_transient_state
+      end
+    end
     amqp_server.close
     http_server.try &.close
     lock.close
