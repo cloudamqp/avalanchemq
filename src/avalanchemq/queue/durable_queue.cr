@@ -112,8 +112,9 @@ module AvalancheMQ
       super
       begin
         @ack_lock.synchronize do
-          @log.debug { "writing #{sp} to ack" }
-          @ack.write_bytes sp
+          ack_sp = RawSegmentPosition.new(sp)
+          @log.debug { "writing #{ack_sp} to ack" }
+          @ack.write_bytes ack_sp
         end
       rescue IO::EOFError
         time = Time.measure do
@@ -169,10 +170,10 @@ module AvalancheMQ
           SchemaVersion.verify(enq, :index)
           SchemaVersion.verify(ack, :index)
 
-          ack_count = ((ack.size - sizeof(Int32)) // SP_SIZE).to_u32
-          acked = Array(SegmentPosition).new(ack_count)
+          ack_count = ((ack.size - sizeof(Int32)) // RawSegmentPosition::BYTESIZE).to_u32
+          acked = Array(RawSegmentPosition).new(ack_count)
           loop do
-            acked << SegmentPosition.from_io ack
+            acked << RawSegmentPosition.from_io ack
           rescue IO::EOFError
             break
           end

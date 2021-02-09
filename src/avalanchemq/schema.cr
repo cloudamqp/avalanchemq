@@ -19,7 +19,7 @@ module AvalancheMQ
     VERSIONS = {
       definition: 1,
       message: 1,
-      index: 2
+      index: 3,
     }
 
     def self.verify(file, type) : Int32
@@ -61,6 +61,9 @@ module AvalancheMQ
           MigrateIndexV1toV2.run(file)
           return
         when 2
+          MigrateAckIndexV2toV3.run(file)
+          return
+        when 3
           return
         end
       end
@@ -130,6 +133,63 @@ module AvalancheMQ
           io.skip(sizeof(UInt32) + sizeof(Int64) + sizeof(UInt8))
           self.new(seg, pos)
         end
+      end
+    end
+
+    class MigrateAckIndexV2toV3
+      def self.run(file)
+        return noop_migration(file, :index) if File.basename(file.path) == "enq" #NOOP for enq file
+        data_dir = File.join(File.dirname(file.path), "..") # data dir is one level up from index files
+        File.open("#{file.path}.tmp", "w") do |f|
+          SchemaVersion.prefix(f, :index)
+          prev_segment = 0u32
+          seg = nil
+          loop do
+            sp_v2 =
+              begin
+                SegmentPosition.from_io file
+              rescue IO::EOFError
+                break
+              end
+            if prev_segment != sp_v2.segment
+              seg.try &.close
+              seg = open_segment data_dir, sp_v2.segment
+            end
+            if segment = seg
+              segment.pos = sp_v2.position
+              begin
+                sp = RawSegmentPosition.new(sp_v2.segment, sp_v2.position)
+                f.write_bytes sp
+              rescue IO::EOFError
+                # if the message has been truncated by GC already
+                next
+              end
+            else
+              # if the file has been deleted by GC already
+              next
+            end
+          end
+          seg.try &.close
+          File.rename f.path, file.path
+          f.fsync
+        end
+      end
+
+      private def self.noop_migration(file, type)
+        File.open("#{file.path}.tmp", "w") do |f|
+          f.write_bytes VERSIONS[type]
+          File.rename f.path, file.path
+          f.fsync
+        end
+      end
+
+      private def self.open_segment(data_dir, seg)
+        filename = "msgs.#{seg.to_s.rjust(10, '0')}"
+        file = File.new(File.join(data_dir, filename))
+        file.buffer_size = Config.instance.file_buffer_size
+        file
+      rescue File::NotFoundError
+        nil
       end
     end
   end

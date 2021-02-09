@@ -3,6 +3,7 @@ require "./spec_helper"
 describe AvalancheMQ::DurableQueue do
   it "GC message index after MAX_ACKS" do
     sp_size = AvalancheMQ::SegmentPosition::BYTESIZE
+    raw_sp_size = AvalancheMQ::RawSegmentPosition::BYTESIZE
     max_acks = AvalancheMQ::Config.instance.queue_max_acks
     with_channel do |ch|
       q = ch.queue("d", durable: true)
@@ -22,11 +23,11 @@ describe AvalancheMQ::DurableQueue do
         case acks
         when max_acks - 1
           sleep 0.1
-          queue.ack_file_size.should eq (max_acks - 1) * sp_size + sizeof(Int32)
+          queue.ack_file_size.should eq (max_acks - 1) * raw_sp_size + sizeof(Int32)
         when max_acks
           sleep 0.2
           queue.enq_file_size.should eq 2 * sp_size + sizeof(Int32)
-          queue.ack_file_size.should eq 0 * sp_size + sizeof(Int32)
+          queue.ack_file_size.should eq 0 * raw_sp_size + sizeof(Int32)
           q.unsubscribe("tag")
         end
       end
@@ -38,6 +39,7 @@ describe AvalancheMQ::DurableQueue do
   pending "GC message index when msgs are dead-lettered" do
     sp_size = AvalancheMQ::SegmentPosition::BYTESIZE
     max_acks = AvalancheMQ::Config.instance.queue_max_acks
+    raw_sp_size = AvalancheMQ::RawSegmentPosition::BYTESIZE
     with_channel do |ch|
       args = AMQP::Client::Arguments.new
       args["x-max-length"] = 1_i64
@@ -54,7 +56,7 @@ describe AvalancheMQ::DurableQueue do
       q.subscribe(tag: "tag", no_ack: false, block: true) do |msg|
         msg.ack
         sleep 0.2
-        queue.ack_file_size.should eq 1 * sp_size + sizeof(Int32)
+        queue.ack_file_size.should eq 1 * raw_sp_size + sizeof(Int32)
         queue.enq_file_size.should eq 1 * sp_size + sizeof(Int32)
         q.unsubscribe("tag")
       end
