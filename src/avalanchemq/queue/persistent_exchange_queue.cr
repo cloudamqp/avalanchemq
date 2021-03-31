@@ -4,9 +4,9 @@ module AvalancheMQ
   class PersistentExchangeQueue < DurableQueue
     @internal = true
 
-    def initialize(vhost : VHost, name : String, args)
+    def initialize(vhost : VHost, name : String, args, ready)
       args["x-overflow"] = "drop-head"
-      super(vhost, name, false, false, args)
+      super(vhost, name, false, false, args, ready)
     end
 
     def head(count : Int, &blk : SegmentPosition -> Nil)

@@ -141,7 +141,7 @@ module AvalancheMQ
         next if ms <= 0
         args["x-message-ttl"] = ms
       end
-      @persistent_queue = PersistentExchangeQueue.new(@vhost, q_name, args)
+      @persistent_queue = QueueFactory.make_persistent_queue(@vhost, q_name, args)
       @vhost.queues[q_name] = @persistent_queue.not_nil!
     end
 
@@ -153,7 +153,7 @@ module AvalancheMQ
       raise "Exchange name too long" if q_name.size > MAX_NAME_LENGTH
       @log.debug { "Declaring delayed queue: #{name}" }
       arguments = Hash(String, AMQP::Field){"x-dead-letter-exchange" => @name}
-      @delayed_queue = DurableDelayedExchangeQueue.new(@vhost, q_name, false, false, arguments)
+      @delayed_queue = QueueFactory.make_delayed_exchange_queue(@vhost, q_name, arguments)
       @vhost.queues[q_name] = @delayed_queue.as(Queue)
     end
 

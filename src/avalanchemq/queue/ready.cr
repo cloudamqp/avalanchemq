@@ -12,6 +12,10 @@ module AvalancheMQ
         @ready = Deque(SegmentPosition).new(@inital_capacity)
       end
 
+      def initialize(@ready : Deque(SegmentPosition))
+        @inital_capacity = @ready.capacity
+      end
+
       def includes?(sp)
         @ready.includes?(sp)
       end
@@ -185,6 +189,10 @@ module AvalancheMQ
         end
       end
 
+      def clear
+        @ready.clear
+      end
+
       def size
         @ready.size
       end
@@ -213,6 +221,10 @@ module AvalancheMQ
 
       def to_a
         @ready.to_a
+      end
+
+      def dup
+        self.class.new(@ready.dup)
       end
     end
 

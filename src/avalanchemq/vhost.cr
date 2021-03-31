@@ -13,6 +13,7 @@ require "./sortable_json"
 require "./exchange"
 require "digest/sha1"
 require "./queue"
+require "./queue/ready"
 require "./mfile"
 require "./schema"
 
@@ -39,6 +40,9 @@ module AvalancheMQ
     @fsync = false
     @connections = Array(Client).new(512)
     @segments : Hash(UInt32, MFile)
+    @ack_buffer : Array(SegmentPosition)? = nil
+    @ready_buffer : Queue::ReadyQueue? = nil
+
     EXCHANGE_TYPES = %w(direct fanout topic headers
       x-federation-upstream x-delayed-message
       x-consistent-hash)
@@ -369,7 +373,11 @@ module AvalancheMQ
         @save.send f if !loading && src.durable && dst.durable
       when AMQP::Frame::Queue::Declare
         return false if @queues.has_key? f.queue_name
-        q = @queues[f.queue_name] = QueueFactory.make(self, f)
+        q = @queues[f.queue_name] = if f.durable && loading
+                                      QueueFactory.make_buffered(self, f, @ack_buffer.not_nil!, @ready_buffer.not_nil!)
+                                    else
+                                      QueueFactory.make(self, f)
+                                    end
         apply_policies([q] of Queue) unless loading
         @save.send f if !loading && f.durable && !f.exclusive
         @events.send(EventType::QueueDeclared) unless loading
@@ -555,6 +563,8 @@ module AvalancheMQ
     end
 
     private def load_definitions!
+      @ack_buffer = Array(SegmentPosition).new
+      @ready_buffer = Queue::ReadyQueue.new
       File.open(File.join(@data_dir, "definitions.amqp"), "r") do |io|
         io.buffer_size = Config.instance.file_buffer_size
         io.advise(File::Advice::Sequential)
@@ -572,6 +582,10 @@ module AvalancheMQ
     rescue IO::Error
       load_default_definitions
       compact!
+    ensure
+      @ack_buffer = nil
+      @ready_buffer = nil
+      GC.collect
     end
 
     private def load_default_definitions

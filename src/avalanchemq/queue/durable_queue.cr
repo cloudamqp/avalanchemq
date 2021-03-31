@@ -11,15 +11,12 @@ module AvalancheMQ
 
     def initialize(@vhost : VHost, @name : String,
                    @exclusive : Bool, @auto_delete : Bool,
-                   @arguments : Hash(String, AMQP::Field))
+                   @arguments : Hash(String, AMQP::Field),
+                   @ready)
       super
       @index_dir = File.join(@vhost.data_dir, Digest::SHA1.hexdigest @name)
       @log.debug { "Index dir: #{@index_dir}" }
-      if Dir.exists?(@index_dir)
-        restore_index
-      else
-        Dir.mkdir @index_dir
-      end
+      Dir.mkdir @index_dir unless Dir.exists?(@index_dir)
       File.write(File.join(@index_dir, ".queue"), @name)
       @enq = MFile.new(File.join(@index_dir, "enq"), ack_max_file_size)
       SchemaVersion.verify_or_prefix(@enq, :index)
@@ -155,73 +152,6 @@ module AvalancheMQ
     end
 
     SP_SIZE = SegmentPosition::BYTESIZE
-
-    private def restore_index : Nil
-      @log.info "Restoring index"
-      SchemaVersion.migrate(File.join(@index_dir, "enq"), :index)
-      SchemaVersion.migrate(File.join(@index_dir, "ack"), :index)
-      File.open(File.join(@index_dir, "enq")) do |enq|
-        File.open(File.join(@index_dir, "ack")) do |ack|
-          enq.buffer_size = Config.instance.file_buffer_size
-          ack.buffer_size = Config.instance.file_buffer_size
-          enq.advise(File::Advice::Sequential)
-          ack.advise(File::Advice::Sequential)
-          SchemaVersion.verify(enq, :index)
-          SchemaVersion.verify(ack, :index)
-
-          # Defer allocation of acked array in case we truncate due to zero sp.
-          acked : Array(SegmentPosition)? = nil
-
-          loop do
-            sp = SegmentPosition.from_io ack
-            if sp.zero?
-              @log.info { "Truncating ack index" }
-              File.open(ack.path, "W") do |f|
-                f.truncate(ack.pos - SegmentPosition::BYTESIZE)
-              end
-              break
-            end
-            unless acked
-              ack_count = ((ack.size - sizeof(Int32)) // SP_SIZE).to_u32
-              acked = Array(SegmentPosition).new(ack_count)
-            end
-            acked << sp
-          rescue IO::EOFError
-            break
-          end
-          acked.try &.sort!
-
-          # Defer allocation of ready queue in case we truncate due to zero sp.
-          ready : ReadyQueue? = nil
-
-          loop do
-            sp = SegmentPosition.from_io enq
-            if sp.zero?
-              @log.info { "Truncating queue index" }
-              File.open(enq.path, "W") do |f|
-                f.truncate(enq.pos - SegmentPosition::BYTESIZE)
-              end
-              break
-            end
-            unless ready
-              # To avoid repetetive allocations in Dequeue#increase_capacity
-              # we redeclare the ready queue with a larger initial capacity
-              enq_count = (enq.size.to_i64 - ack.size - (sizeof(Int32) * 2)) // SP_SIZE
-              capacity = Math.max(enq_count, 1024)
-              @ready = ready = ReadyQueue.new Math.pw2ceil(capacity)
-            end
-            next if acked.try { |a| a.bsearch { |asp| asp >= sp } == sp }
-            ready << sp
-          rescue IO::EOFError
-            break
-          end
-          @log.info { "#{message_count} messages" }
-          message_available if message_count > 0
-        end
-      end
-    rescue ex : IO::Error
-      @log.error { "Could not restore index: #{ex.inspect}" }
-    end
 
     def enq_file_size
       @enq.size

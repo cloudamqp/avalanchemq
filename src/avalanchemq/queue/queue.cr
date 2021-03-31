@@ -50,7 +50,6 @@ module AvalancheMQ
     @message_available = Channel(Nil).new(1)
     @consumer_available = Channel(Nil).new(1)
     @refresh_ttl_timeout = Channel(Nil).new(1)
-    @ready = ReadyQueue.new
     @unacked = UnackQueue.new
     @paused = Channel(Nil).new(1)
 
@@ -68,7 +67,8 @@ module AvalancheMQ
 
     def initialize(@vhost : VHost, @name : String,
                    @exclusive = false, @auto_delete = false,
-                   @arguments = Hash(String, AMQP::Field).new)
+                   @arguments = Hash(String, AMQP::Field).new,
+                   @ready = ReadyQueue.new)
       @last_get_time = Time.monotonic
       @log = @vhost.log.dup
       @log.progname += " queue=#{@name}"
